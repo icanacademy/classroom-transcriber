@@ -72,39 +72,54 @@ impl Transcriber {
 }
 
 fn find_whisper_cli() -> Result<PathBuf, WhisperError> {
-    // Common locations for whisper CLI
-    let mut candidates = vec![
-        // macOS Homebrew locations
-        "/usr/local/bin/whisper-cli".to_string(),
-        "/opt/homebrew/bin/whisper-cli".to_string(),
-        "/usr/local/bin/whisper-cpp".to_string(),
-        "/opt/homebrew/bin/whisper-cpp".to_string(),
-    ];
+    let mut candidates: Vec<PathBuf> = vec![];
+
+    // First priority: Check bundled binary next to the app executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            #[cfg(target_os = "windows")]
+            {
+                candidates.push(exe_dir.join("whisper-cli.exe"));
+                candidates.push(exe_dir.join("whisper-cli-x86_64-pc-windows-msvc.exe"));
+            }
+            #[cfg(target_os = "macos")]
+            {
+                candidates.push(exe_dir.join("whisper-cli"));
+                candidates.push(exe_dir.join("whisper-cli-aarch64-apple-darwin"));
+                candidates.push(exe_dir.join("whisper-cli-x86_64-apple-darwin"));
+            }
+            #[cfg(target_os = "linux")]
+            {
+                candidates.push(exe_dir.join("whisper-cli"));
+                candidates.push(exe_dir.join("whisper-cli-x86_64-unknown-linux-gnu"));
+            }
+        }
+    }
+
+    // macOS Homebrew locations
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(PathBuf::from("/usr/local/bin/whisper-cli"));
+        candidates.push(PathBuf::from("/opt/homebrew/bin/whisper-cli"));
+        candidates.push(PathBuf::from("/usr/local/bin/whisper-cpp"));
+        candidates.push(PathBuf::from("/opt/homebrew/bin/whisper-cpp"));
+    }
 
     // Windows locations
     #[cfg(target_os = "windows")]
     {
-        candidates.push("C:\\Program Files\\whisper-cpp\\whisper-cli.exe".to_string());
-        candidates.push("C:\\Program Files (x86)\\whisper-cpp\\whisper-cli.exe".to_string());
-
-        // Check in app's own directory
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                candidates.push(exe_dir.join("whisper-cli.exe").to_string_lossy().to_string());
-                candidates.push(exe_dir.join("whisper-cli").to_string_lossy().to_string());
-            }
-        }
+        candidates.push(PathBuf::from("C:\\Program Files\\whisper-cpp\\whisper-cli.exe"));
+        candidates.push(PathBuf::from("C:\\Program Files (x86)\\whisper-cpp\\whisper-cli.exe"));
 
         // Check in LOCALAPPDATA
         if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            candidates.push(format!("{}\\whisper-cpp\\whisper-cli.exe", local_app_data));
+            candidates.push(PathBuf::from(format!("{}\\whisper-cpp\\whisper-cli.exe", local_app_data)));
         }
     }
 
-    for path in &candidates {
-        let p = PathBuf::from(path);
+    for p in &candidates {
         if p.exists() {
-            return Ok(p);
+            return Ok(p.clone());
         }
     }
 

@@ -22,8 +22,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install whisper-cpp
-        run: brew install whisper-cpp
+      - name: Setup whisper-cli for bundling
+        run: |
+          brew install whisper-cpp
+          mkdir -p src-tauri/binaries
+          # Create dummy binaries for other platforms (Tauri requires all targets)
+          touch src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe
+          # Copy the actual macOS binary
+          cp $(which whisper-cli) src-tauri/binaries/whisper-cli-aarch64-apple-darwin || cp $(which whisper-cli) src-tauri/binaries/whisper-cli-x86_64-apple-darwin
+          # Make executable
+          chmod +x src-tauri/binaries/*
 
       - name: Build Tauri app
         run: npm run tauri build
@@ -49,6 +57,28 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Download and setup whisper-cli
+        shell: powershell
+        run: |
+          # Download whisper.cpp Windows binaries
+          $whisperUrl = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.2/whisper-bin-x64.zip"
+          Invoke-WebRequest -Uri $whisperUrl -OutFile whisper.zip
+          Expand-Archive -Path whisper.zip -DestinationPath whisper-temp
+
+          # Create binaries directory
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries
+
+          # Copy whisper-cli with correct name for Tauri
+          Copy-Item whisper-temp/Release/whisper-cli.exe -Destination src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe
+
+          # Copy required DLLs to resources
+          New-Item -ItemType Directory -Force -Path src-tauri/resources
+          Copy-Item whisper-temp/Release/*.dll -Destination src-tauri/resources/
+
+          # Create dummy files for other platforms
+          New-Item -ItemType File -Force -Path src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+          New-Item -ItemType File -Force -Path src-tauri/binaries/whisper-cli-x86_64-apple-darwin
 
       - name: Build Tauri app
         run: npm run tauri build
