@@ -50,14 +50,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Download whisper.cpp
-        shell: powershell
-        run: |
-          $whisperUrl = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.2/whisper-bin-x64.zip"
-          Invoke-WebRequest -Uri $whisperUrl -OutFile whisper.zip
-          Expand-Archive -Path whisper.zip -DestinationPath whisper-bin
-          Copy-Item whisper-bin\whisper-cli.exe -Destination C:\Windows\System32\whisper-cli.exe
-
       - name: Build Tauri app
         run: npm run tauri build
 
