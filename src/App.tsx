@@ -75,6 +75,7 @@ function App() {
   const [teacherName, setTeacherName] = useState("");
   const [serverUrl, setServerUrl] = useState("http://localhost:3000");
   const [modelPath, setModelPath] = useState("");
+  const [whisperStatus, setWhisperStatus] = useState("");
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [serverConnected, setServerConnected] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -140,6 +141,16 @@ function App() {
     }
   }, []);
 
+  const getWhisperStatus = useCallback(async () => {
+    try {
+      const status = await invoke<string>("get_whisper_status");
+      setWhisperStatus(status);
+    } catch (e) {
+      console.error("Failed to get whisper status:", e);
+      setWhisperStatus("Error checking status");
+    }
+  }, []);
+
   const fetchStudentsAndTeachers = useCallback(async (serverUrlToUse: string) => {
     setLoadingLists(true);
     try {
@@ -198,7 +209,8 @@ function App() {
     loadUnsyncedCount();
     checkServerConnection();
     getModelPath();
-  }, [loadSettings, loadRecordings, loadUnsyncedCount, checkServerConnection, getModelPath]);
+    getWhisperStatus();
+  }, [loadSettings, loadRecordings, loadUnsyncedCount, checkServerConnection, getModelPath, getWhisperStatus]);
 
   // Fetch students/teachers when setup wizard is shown
   useEffect(() => {
@@ -732,6 +744,9 @@ function App() {
                 ) : (
                   <span className="not-loaded">Not loaded</span>
                 )}
+              </p>
+              <p className="whisper-status" style={{ fontSize: "0.85rem", color: whisperStatus.includes("Found") ? "#28a745" : "#dc3545" }}>
+                Whisper CLI: {whisperStatus}
               </p>
 
               <div className="setting-group">

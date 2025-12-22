@@ -48,26 +48,55 @@ impl Transcriber {
                 "-otxt",
             ])
             .output()
-            .map_err(|e| WhisperError::TranscriptionError(e.to_string()))?;
+            .map_err(|e| WhisperError::TranscriptionError(format!("Failed to run whisper-cli: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(WhisperError::TranscriptionError(stderr.to_string()));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(WhisperError::TranscriptionError(format!(
+                "Whisper failed. stderr: {} stdout: {}",
+                stderr, stdout
+            )));
         }
 
-        // Read the output text file (whisper creates .txt file next to input)
-        let txt_path = audio_path.with_extension("wav.txt");
-        if txt_path.exists() {
-            let transcript = std::fs::read_to_string(&txt_path)
-                .map_err(|e| WhisperError::TranscriptionError(e.to_string()))?;
-            // Clean up the txt file
-            let _ = std::fs::remove_file(&txt_path);
-            return Ok(transcript.trim().to_string());
+        // Try multiple possible output file paths
+        // whisper-cli creates .txt file, but the exact naming varies by version
+        let possible_txt_paths = vec![
+            audio_path.with_extension("txt"),           // recording.txt (replaces .wav)
+            audio_path.with_extension("wav.txt"),       // recording.wav.txt (appends .txt)
+            {
+                // Same directory, same base name + .txt
+                let mut p = audio_path.clone();
+                let filename = audio_path.file_stem().unwrap_or_default().to_string_lossy();
+                p.set_file_name(format!("{}.txt", filename));
+                p
+            },
+        ];
+
+        for txt_path in &possible_txt_paths {
+            if txt_path.exists() {
+                let transcript = std::fs::read_to_string(txt_path)
+                    .map_err(|e| WhisperError::TranscriptionError(format!("Failed to read transcript file: {}", e)))?;
+                // Clean up the txt file
+                let _ = std::fs::remove_file(txt_path);
+                let trimmed = transcript.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed);
+                }
+            }
         }
 
         // Fallback: parse stdout
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.trim().to_string())
+        let trimmed = stdout.trim().to_string();
+
+        if trimmed.is_empty() {
+            return Err(WhisperError::TranscriptionError(
+                "Transcription produced empty output. The audio may be too short or contain no speech.".to_string()
+            ));
+        }
+
+        Ok(trimmed)
     }
 }
 
@@ -160,4 +189,11 @@ fn find_whisper_cli() -> Result<PathBuf, WhisperError> {
 
 pub fn check_whisper_installed() -> bool {
     find_whisper_cli().is_ok()
+}
+
+pub fn get_whisper_status() -> String {
+    match find_whisper_cli() {
+        Ok(path) => format!("Found at: {}", path.display()),
+        Err(e) => format!("Not found: {}", e),
+    }
 }

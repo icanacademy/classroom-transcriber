@@ -474,6 +474,11 @@ fn check_model_exists(state: State<AppState>) -> bool {
     model_path.exists()
 }
 
+#[tauri::command]
+fn get_whisper_status() -> String {
+    whisper::get_whisper_status()
+}
+
 // ========== Recording List Commands ==========
 
 #[tauri::command]
@@ -625,6 +630,7 @@ pub fn run() {
             transcribe_recording,
             get_model_path,
             set_model_path,
+            get_whisper_status,
             // Recordings list
             get_recordings,
             delete_recording,
