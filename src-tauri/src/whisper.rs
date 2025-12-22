@@ -35,8 +35,42 @@ impl Transcriber {
     }
 
     pub fn transcribe(&self, audio_path: &PathBuf) -> Result<String, WhisperError> {
+        // Build the command
+        let mut cmd = Command::new(&self.whisper_cli);
+
+        // On Windows, add directories to PATH so whisper-cli can find DLLs
+        #[cfg(target_os = "windows")]
+        {
+            let mut paths_to_add = Vec::new();
+
+            // Add whisper-cli directory
+            if let Some(cli_dir) = self.whisper_cli.parent() {
+                paths_to_add.push(cli_dir.to_path_buf());
+            }
+
+            // Add resources directory (where Tauri bundles additional files)
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    // Check resources subfolder
+                    let resources_dir = exe_dir.join("resources");
+                    if resources_dir.exists() {
+                        paths_to_add.push(resources_dir);
+                    }
+                    // Also add exe directory itself
+                    paths_to_add.push(exe_dir.to_path_buf());
+                }
+            }
+
+            if !paths_to_add.is_empty() {
+                let current_path = std::env::var("PATH").unwrap_or_default();
+                let new_paths: Vec<String> = paths_to_add.iter().map(|p| p.display().to_string()).collect();
+                let new_path = format!("{};{}", new_paths.join(";"), current_path);
+                cmd.env("PATH", new_path);
+            }
+        }
+
         // Run whisper CLI
-        let output = Command::new(&self.whisper_cli)
+        let output = cmd
             .args([
                 "-m",
                 self.model_path.to_str().unwrap(),
