@@ -1,0 +1,42 @@
+[package]
+name = "classroom-transcriber"
+version = "0.1.0"
+description = "Offline audio transcription app for classrooms"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "classroom_transcriber_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Whisper CLI (users install via: brew install whisper-cpp)
+
+# Audio recording
+cpal = "0.15"
+hound = "3.5"
+
+# Local database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# HTTP client for server sync
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "5"
+thiserror = "2"
+

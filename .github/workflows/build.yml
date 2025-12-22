@@ -1,0 +1,74 @@
+name: Build Installers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install whisper-cpp
+        run: brew install whisper-cpp
+
+      - name: Build Tauri app
+        run: npm run tauri build
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Download whisper.cpp
+        shell: powershell
+        run: |
+          $whisperUrl = "https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.2/whisper-bin-x64.zip"
+          Invoke-WebRequest -Uri $whisperUrl -OutFile whisper.zip
+          Expand-Archive -Path whisper.zip -DestinationPath whisper-bin
+          Copy-Item whisper-bin\whisper.exe -Destination C:\Windows\System32\whisper-cli.exe
+
+      - name: Build Tauri app
+        run: npm run tauri build
+
+      - name: Upload Windows MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: src-tauri/target/release/bundle/nsis/*.exe
