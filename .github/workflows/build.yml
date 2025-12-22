@@ -26,6 +26,9 @@ jobs:
         run: |
           brew install whisper-cpp
           mkdir -p src-tauri/binaries
+          mkdir -p src-tauri/resources
+          # Create placeholder in resources (Tauri requires glob to match)
+          touch src-tauri/resources/.gitkeep
           # Create dummy binaries for other platforms (Tauri requires all targets)
           touch src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe
           # Copy the actual macOS binary
