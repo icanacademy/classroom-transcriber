@@ -734,20 +734,35 @@ function App() {
                 )}
               </p>
 
-              {!settings.model_loaded && (
-                <>
-                  <p className="model-instructions">
-                    Download the Whisper model file and place it at:
-                  </p>
-                  <code className="model-path">{modelPath}</code>
-                  <p className="model-download">
-                    Download from: <a href="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" target="_blank" rel="noreferrer">
-                      ggml-base.en.bin (142 MB)
-                    </a>
-                  </p>
-                  <button onClick={handleLoadModel}>Load Model</button>
-                </>
-              )}
+              <div className="setting-group">
+                <label>Model Path</label>
+                <input
+                  type="text"
+                  value={modelPath}
+                  onChange={(e) => setModelPath(e.target.value)}
+                  placeholder="Path to ggml-base.en.bin"
+                />
+                <button className="small-btn" onClick={async () => {
+                  try {
+                    await invoke("set_model_path", { path: modelPath });
+                    showSuccess("Model path saved!");
+                  } catch (e) {
+                    showError(`Failed to save path: ${e}`);
+                  }
+                }}>
+                  Save Path
+                </button>
+              </div>
+
+              <p className="model-download">
+                Download from: <a href="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" target="_blank" rel="noreferrer">
+                  ggml-base.en.bin (142 MB)
+                </a>
+              </p>
+
+              <button onClick={handleLoadModel}>
+                {settings.model_loaded ? "Reload Model" : "Load Model"}
+              </button>
 
               {settings.model_loaded && (
                 <p className="model-ready">Model is ready for transcription!</p>

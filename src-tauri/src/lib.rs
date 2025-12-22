@@ -339,7 +339,19 @@ fn stop_and_process(state: State<AppState>, window: tauri::Window) -> Result<Pro
 
 #[tauri::command]
 fn load_model(state: State<AppState>) -> Result<(), String> {
-    let model_path = state.data_dir.join("models").join("ggml-base.en.bin");
+    // Check for custom model path first
+    let model_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(custom_path)) = db.get_setting("model_path") {
+            if !custom_path.is_empty() {
+                PathBuf::from(custom_path)
+            } else {
+                state.data_dir.join("models").join("ggml-base.en.bin")
+            }
+        } else {
+            state.data_dir.join("models").join("ggml-base.en.bin")
+        }
+    };
 
     if !model_path.exists() {
         return Err(format!(
@@ -393,12 +405,28 @@ fn transcribe_recording(state: State<AppState>, recording_id: String) -> Result<
 
 #[tauri::command]
 fn get_model_path(state: State<AppState>) -> String {
+    // Check if custom path is set
+    if let Ok(db) = state.db.lock() {
+        if let Ok(Some(custom_path)) = db.get_setting("model_path") {
+            if !custom_path.is_empty() {
+                return custom_path;
+            }
+        }
+    }
+    // Default path
     state
         .data_dir
         .join("models")
         .join("ggml-base.en.bin")
         .to_string_lossy()
         .to_string()
+}
+
+#[tauri::command]
+fn set_model_path(state: State<AppState>, path: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_setting("model_path", &path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -596,6 +624,7 @@ pub fn run() {
             check_model_exists,
             transcribe_recording,
             get_model_path,
+            set_model_path,
             // Recordings list
             get_recordings,
             delete_recording,
