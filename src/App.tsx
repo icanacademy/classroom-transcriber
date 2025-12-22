@@ -255,7 +255,7 @@ function App() {
       });
 
       // Get updated settings without triggering setup screen again
-      const s = await invoke<Settings>("get_settings");
+      let s = await invoke<Settings>("get_settings");
       setSettings(s);
       setStudentId(s.student_id);
       setStudentName(s.student_name);
@@ -263,6 +263,34 @@ function App() {
       setServerUrl(s.server_url);
 
       setShowSetup(false);
+
+      // Auto-download model if not exists
+      if (!s.model_loaded) {
+        const modelExists = await invoke<boolean>("check_model_exists");
+        if (!modelExists) {
+          showSuccess("Downloading AI model (142 MB)... Please wait.");
+          try {
+            await invoke("download_model");
+            showSuccess("Model downloaded! Loading...");
+            await invoke("load_model");
+            s = await invoke<Settings>("get_settings");
+            setSettings(s);
+          } catch (e) {
+            showError(`Model download failed: ${e}`);
+            return;
+          }
+        } else {
+          // Model exists but not loaded, try to load it
+          try {
+            await invoke("load_model");
+            s = await invoke<Settings>("get_settings");
+            setSettings(s);
+          } catch (e) {
+            showError(`Failed to load model: ${e}`);
+            return;
+          }
+        }
+      }
 
       // Auto-start recording if model is loaded
       if (s.model_loaded) {

@@ -72,13 +72,34 @@ impl Transcriber {
 }
 
 fn find_whisper_cli() -> Result<PathBuf, WhisperError> {
-    // Common locations for whisper CLI (Homebrew installs as whisper-cli)
-    let candidates = [
-        "/usr/local/bin/whisper-cli",
-        "/opt/homebrew/bin/whisper-cli",
-        "/usr/local/bin/whisper-cpp",
-        "/opt/homebrew/bin/whisper-cpp",
+    // Common locations for whisper CLI
+    let mut candidates = vec![
+        // macOS Homebrew locations
+        "/usr/local/bin/whisper-cli".to_string(),
+        "/opt/homebrew/bin/whisper-cli".to_string(),
+        "/usr/local/bin/whisper-cpp".to_string(),
+        "/opt/homebrew/bin/whisper-cpp".to_string(),
     ];
+
+    // Windows locations
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push("C:\\Program Files\\whisper-cpp\\whisper-cli.exe".to_string());
+        candidates.push("C:\\Program Files (x86)\\whisper-cpp\\whisper-cli.exe".to_string());
+
+        // Check in app's own directory
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                candidates.push(exe_dir.join("whisper-cli.exe").to_string_lossy().to_string());
+                candidates.push(exe_dir.join("whisper-cli").to_string_lossy().to_string());
+            }
+        }
+
+        // Check in LOCALAPPDATA
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            candidates.push(format!("{}\\whisper-cpp\\whisper-cli.exe", local_app_data));
+        }
+    }
 
     for path in &candidates {
         let p = PathBuf::from(path);
@@ -87,14 +108,33 @@ fn find_whisper_cli() -> Result<PathBuf, WhisperError> {
         }
     }
 
-    // Try to find via which
-    for cmd in &["whisper-cli", "whisper-cpp"] {
-        if let Ok(output) = Command::new("which").arg(cmd).output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout);
-                let p = PathBuf::from(path.trim());
-                if p.exists() {
-                    return Ok(p);
+    // Try to find via which (Unix) or where (Windows)
+    #[cfg(not(target_os = "windows"))]
+    {
+        for cmd in &["whisper-cli", "whisper-cpp"] {
+            if let Ok(output) = Command::new("which").arg(cmd).output() {
+                if output.status.success() {
+                    let path = String::from_utf8_lossy(&output.stdout);
+                    let p = PathBuf::from(path.trim());
+                    if p.exists() {
+                        return Ok(p);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        for cmd in &["whisper-cli.exe", "whisper-cli", "whisper-cpp.exe"] {
+            if let Ok(output) = Command::new("where").arg(cmd).output() {
+                if output.status.success() {
+                    let path = String::from_utf8_lossy(&output.stdout);
+                    let first_line = path.lines().next().unwrap_or("").trim();
+                    let p = PathBuf::from(first_line);
+                    if p.exists() {
+                        return Ok(p);
+                    }
                 }
             }
         }

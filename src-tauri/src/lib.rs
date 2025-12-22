@@ -401,6 +401,51 @@ fn get_model_path(state: State<AppState>) -> String {
         .to_string()
 }
 
+#[tauri::command]
+fn download_model(state: State<AppState>, window: tauri::Window) -> Result<(), String> {
+    let model_path = state.data_dir.join("models").join("ggml-base.en.bin");
+
+    if model_path.exists() {
+        return Ok(()); // Already downloaded
+    }
+
+    let _ = window.emit("model-download-progress", "Starting download...");
+
+    let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+
+    // Download the model
+    let response = reqwest::blocking::get(url)
+        .map_err(|e| format!("Failed to download: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let _ = window.emit("model-download-progress", "Downloading... (142 MB)");
+
+    let bytes = response.bytes()
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let _ = window.emit("model-download-progress", "Saving model...");
+
+    std::fs::write(&model_path, &bytes)
+        .map_err(|e| format!("Failed to save model: {}", e))?;
+
+    let _ = window.emit("model-download-progress", "Done!");
+
+    // Auto-load the model after download
+    let transcriber = Transcriber::new(&model_path).map_err(|e| e.to_string())?;
+    *state.transcriber.lock().unwrap() = Some(transcriber);
+
+    Ok(())
+}
+
+#[tauri::command]
+fn check_model_exists(state: State<AppState>) -> bool {
+    let model_path = state.data_dir.join("models").join("ggml-base.en.bin");
+    model_path.exists()
+}
+
 // ========== Recording List Commands ==========
 
 #[tauri::command]
@@ -547,6 +592,8 @@ pub fn run() {
             is_recording,
             // Transcription
             load_model,
+            download_model,
+            check_model_exists,
             transcribe_recording,
             get_model_path,
             // Recordings list
