@@ -263,16 +263,20 @@ fn ensure_dlls_available(whisper_cli: &PathBuf) {
         return;
     };
 
-    // List of DLLs to copy
-    let dlls = ["ggml.dll", "whisper.dll"];
-
-    for dll in &dlls {
-        let src = resources_dir.join(dll);
-        let dst = cli_dir.join(dll);
-
-        // Only copy if source exists and destination doesn't
-        if src.exists() && !dst.exists() {
-            let _ = std::fs::copy(&src, &dst);
+    // Copy ALL DLLs from resources to whisper-cli directory
+    if let Ok(entries) = std::fs::read_dir(&resources_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "dll" {
+                    if let Some(filename) = path.file_name() {
+                        let dst = cli_dir.join(filename);
+                        if !dst.exists() {
+                            let _ = std::fs::copy(&path, &dst);
+                        }
+                    }
+                }
+            }
         }
     }
 }

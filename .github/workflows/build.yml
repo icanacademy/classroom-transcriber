@@ -76,14 +76,13 @@ jobs:
           # Copy whisper-cli with correct name for Tauri sidecar
           Copy-Item whisper-temp/Release/whisper-cli.exe -Destination src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe
 
-          # Copy required DLLs to SAME directory as whisper-cli (binaries folder)
-          # These need to be next to the exe for Windows to find them
-          Copy-Item whisper-temp/Release/ggml.dll -Destination src-tauri/binaries/
-          Copy-Item whisper-temp/Release/whisper.dll -Destination src-tauri/binaries/
+          # Copy ALL DLLs to resources folder (Tauri will bundle these)
+          # whisper-cli needs: ggml.dll, ggml-base.dll, ggml-cpu.dll, whisper.dll
+          Copy-Item whisper-temp/Release/*.dll -Destination src-tauri/resources/
 
-          # Also copy DLLs to resources as backup (Tauri bundles resources/)
-          Copy-Item whisper-temp/Release/ggml.dll -Destination src-tauri/resources/
-          Copy-Item whisper-temp/Release/whisper.dll -Destination src-tauri/resources/
+          # Show what DLLs we're bundling
+          Write-Host "DLLs to bundle:"
+          Get-ChildItem src-tauri/resources/*.dll
 
           # Create dummy files for other platforms
           New-Item -ItemType File -Force -Path src-tauri/binaries/whisper-cli-aarch64-apple-darwin
