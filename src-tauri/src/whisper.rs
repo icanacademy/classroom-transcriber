@@ -240,7 +240,23 @@ pub fn check_whisper_installed() -> bool {
 
 pub fn get_whisper_status() -> String {
     match find_whisper_cli() {
-        Ok(path) => format!("Found at: {}", path.display()),
+        Ok(path) => {
+            // Try to run --help to verify it works
+            let result = std::process::Command::new(&path)
+                .arg("--help")
+                .output();
+            match result {
+                Ok(output) => {
+                    if output.status.success() {
+                        format!("Found and working: {}", path.display())
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        format!("Found but error: {} - {}", path.display(), stderr)
+                    }
+                }
+                Err(e) => format!("Found but can't run: {} - {}", path.display(), e),
+            }
+        }
         Err(e) => format!("Not found: {}", e),
     }
 }
