@@ -28,6 +28,12 @@ impl Transcriber {
         // Find whisper CLI
         let whisper_cli = find_whisper_cli()?;
 
+        // On Windows, ensure DLLs are next to whisper-cli.exe
+        #[cfg(target_os = "windows")]
+        {
+            ensure_dlls_available(&whisper_cli);
+        }
+
         Ok(Self {
             model_path: model_path.clone(),
             whisper_cli,
@@ -238,9 +244,48 @@ pub fn check_whisper_installed() -> bool {
     find_whisper_cli().is_ok()
 }
 
+/// On Windows, copy DLLs from resources folder to whisper-cli directory if needed
+#[cfg(target_os = "windows")]
+fn ensure_dlls_available(whisper_cli: &PathBuf) {
+    let cli_dir = match whisper_cli.parent() {
+        Some(dir) => dir,
+        None => return,
+    };
+
+    // Find resources directory
+    let resources_dir = if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            exe_dir.join("resources")
+        } else {
+            return;
+        }
+    } else {
+        return;
+    };
+
+    // List of DLLs to copy
+    let dlls = ["ggml.dll", "whisper.dll"];
+
+    for dll in &dlls {
+        let src = resources_dir.join(dll);
+        let dst = cli_dir.join(dll);
+
+        // Only copy if source exists and destination doesn't
+        if src.exists() && !dst.exists() {
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+}
+
 pub fn get_whisper_status() -> String {
     match find_whisper_cli() {
         Ok(path) => {
+            // On Windows, ensure DLLs are available
+            #[cfg(target_os = "windows")]
+            {
+                ensure_dlls_available(&path);
+            }
+
             // Try to run --help to verify it works
             let result = std::process::Command::new(&path)
                 .arg("--help")
