@@ -142,14 +142,27 @@ fn find_whisper_cli() -> Result<PathBuf, WhisperError> {
         if let Some(exe_dir) = exe_path.parent() {
             #[cfg(target_os = "windows")]
             {
+                // Direct locations
                 candidates.push(exe_dir.join("whisper-cli.exe"));
                 candidates.push(exe_dir.join("whisper-cli-x86_64-pc-windows-msvc.exe"));
+                // Resources folder (Tauri bundles resources here)
+                candidates.push(exe_dir.join("resources").join("whisper-cli.exe"));
+                candidates.push(exe_dir.join("resources").join("whisper-cli-x86_64-pc-windows-msvc.exe"));
+                // Binaries subfolder in resources
+                candidates.push(exe_dir.join("resources").join("binaries").join("whisper-cli.exe"));
+                candidates.push(exe_dir.join("resources").join("binaries").join("whisper-cli-x86_64-pc-windows-msvc.exe"));
+                // _up_ directory (for dev builds)
+                candidates.push(exe_dir.join("..").join("whisper-cli.exe"));
             }
             #[cfg(target_os = "macos")]
             {
                 candidates.push(exe_dir.join("whisper-cli"));
                 candidates.push(exe_dir.join("whisper-cli-aarch64-apple-darwin"));
                 candidates.push(exe_dir.join("whisper-cli-x86_64-apple-darwin"));
+                // Resources folder
+                candidates.push(exe_dir.join("../Resources").join("whisper-cli"));
+                candidates.push(exe_dir.join("../Resources").join("whisper-cli-aarch64-apple-darwin"));
+                candidates.push(exe_dir.join("../Resources").join("binaries").join("whisper-cli-aarch64-apple-darwin"));
             }
             #[cfg(target_os = "linux")]
             {

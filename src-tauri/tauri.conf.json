@@ -37,7 +37,8 @@
       "binaries/whisper-cli"
     ],
     "resources": [
-      "resources/*"
+      "resources/*",
+      "binaries/*"
     ]
   }
 }
