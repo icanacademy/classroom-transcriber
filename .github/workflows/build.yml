@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-13  # Intel Mac for x86_64
+    runs-on: macos-latest  # Apple Silicon Mac
     steps:
       - uses: actions/checkout@v4
 
