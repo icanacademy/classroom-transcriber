@@ -5,10 +5,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WhisperError {
-    #[error("Model not found at {0}")]
-    ModelNotFound(String),
-    #[error("Python environment not found")]
-    PythonNotFound,
+    #[error("Transcriber not found")]
+    TranscriberNotFound,
     #[error("Transcription failed: {0}")]
     TranscriptionError(String),
 }
@@ -35,36 +33,52 @@ pub struct TranscriptionResult {
 }
 
 pub struct Transcriber {
-    python_path: PathBuf,
-    script_path: PathBuf,
+    binary_path: PathBuf,
     hf_token: Option<String>,
 }
 
 impl Transcriber {
-    pub fn new(app_dir: &PathBuf) -> Result<Self, WhisperError> {
-        // Find Python in the whisperx-env
-        let python_path = app_dir.join("whisperx-env").join("bin").join("python");
+    pub fn new() -> Result<Self, WhisperError> {
+        // Find the bundled whisperx-transcriber binary
+        // In development, it's in src-tauri/binaries/
+        // In production, it's in the app bundle
 
-        if !python_path.exists() {
-            // Try alternate locations
-            let alt_python = PathBuf::from("/Users/edward/classroom-transcriber/whisperx-env/bin/python");
-            if alt_python.exists() {
+        let possible_paths = vec![
+            // Development paths
+            PathBuf::from("binaries/whisperx-transcriber-x86_64-apple-darwin"),
+            PathBuf::from("src-tauri/binaries/whisperx-transcriber-x86_64-apple-darwin"),
+            PathBuf::from("/Users/edward/classroom-transcriber/src-tauri/binaries/whisperx-transcriber-x86_64-apple-darwin"),
+            PathBuf::from("/Users/edward/classroom-transcriber/dist/whisperx-transcriber"),
+            // Production paths (macOS)
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.join("whisperx-transcriber")))
+                .unwrap_or_default(),
+        ];
+
+        for path in &possible_paths {
+            if path.exists() {
                 return Ok(Self {
-                    python_path: alt_python,
-                    script_path: PathBuf::from("/Users/edward/classroom-transcriber/whisperx_transcribe.py"),
+                    binary_path: path.clone(),
                     hf_token: std::env::var("HF_TOKEN").ok(),
                 });
             }
-            return Err(WhisperError::PythonNotFound);
         }
 
-        let script_path = app_dir.join("whisperx_transcribe.py");
+        // Fallback: Try to find it relative to the executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let sidecar = exe_dir.join("whisperx-transcriber");
+                if sidecar.exists() {
+                    return Ok(Self {
+                        binary_path: sidecar,
+                        hf_token: std::env::var("HF_TOKEN").ok(),
+                    });
+                }
+            }
+        }
 
-        Ok(Self {
-            python_path,
-            script_path,
-            hf_token: std::env::var("HF_TOKEN").ok(),
-        })
+        Err(WhisperError::TranscriberNotFound)
     }
 
     pub fn set_hf_token(&mut self, token: String) {
@@ -72,22 +86,17 @@ impl Transcriber {
     }
 
     pub fn transcribe(&self, audio_path: &PathBuf) -> Result<String, WhisperError> {
-        // Call Python script for transcription with diarization
         let result = self.transcribe_with_diarization(audio_path)?;
-
-        // For backwards compatibility, return just the student's transcript
-        // Filter out likely teacher segments (usually the one who talks less or asks questions)
-        Ok(self.extract_student_transcript(&result))
+        Ok(self.extract_labeled_transcript(&result))
     }
 
     pub fn transcribe_with_diarization(&self, audio_path: &PathBuf) -> Result<TranscriptionResult, WhisperError> {
-        let mut cmd = Command::new(&self.python_path);
-        cmd.arg(&self.script_path);
+        let mut cmd = Command::new(&self.binary_path);
         cmd.arg(audio_path.to_str().unwrap());
         cmd.arg("--model");
-        cmd.arg("tiny"); // Use tiny for speed, can be configurable later
+        cmd.arg("tiny");
 
-        // Add HF token if available
+        // Add HF token if available for speaker diarization
         if let Some(ref token) = self.hf_token {
             cmd.arg("--hf-token");
             cmd.arg(token);
@@ -100,7 +109,7 @@ impl Transcriber {
 
         let output = cmd
             .output()
-            .map_err(|e| WhisperError::TranscriptionError(format!("Failed to run Python script: {}", e)))?;
+            .map_err(|e| WhisperError::TranscriptionError(format!("Failed to run transcriber: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -125,18 +134,17 @@ impl Transcriber {
         Err(WhisperError::TranscriptionError("No JSON output from transcription".to_string()))
     }
 
-    fn extract_student_transcript(&self, result: &TranscriptionResult) -> String {
+    fn extract_labeled_transcript(&self, result: &TranscriptionResult) -> String {
         // If no diarization or only one speaker, return full transcript
         if result.speakers.len() <= 1 {
             return result.full_transcript.clone();
         }
 
-        // Find the speaker who talked the most (likely the student)
-        // In a classroom recording, the student is usually the one who speaks more
+        // Sort speakers by word count
         let mut speakers_by_words: Vec<_> = result.speakers.iter().collect();
         speakers_by_words.sort_by(|a, b| b.1.word_count.cmp(&a.1.word_count));
 
-        // Create speaker labels: Speaker 1, Speaker 2, etc. (sorted by who talks most)
+        // Create speaker labels: Speaker 1, Speaker 2, etc.
         let mut speaker_labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (i, (speaker, _)) in speakers_by_words.iter().enumerate() {
             let label = format!("Speaker {}", i + 1);
@@ -154,41 +162,18 @@ impl Transcriber {
 
         labeled_text.join("\n")
     }
-
-    /// Get a formatted transcript with speaker labels
-    pub fn get_labeled_transcript(&self, result: &TranscriptionResult) -> String {
-        result.segments
-            .iter()
-            .map(|s| format!("[{}] {}", s.speaker, s.text))
-            .collect::<Vec<String>>()
-            .join("\n")
-    }
-}
-
-pub fn check_whisper_installed() -> bool {
-    // Check if Python environment exists
-    let python_path = PathBuf::from("/Users/edward/classroom-transcriber/whisperx-env/bin/python");
-    python_path.exists()
 }
 
 pub fn get_whisper_status() -> String {
-    let python_path = PathBuf::from("/Users/edward/classroom-transcriber/whisperx-env/bin/python");
-    let script_path = PathBuf::from("/Users/edward/classroom-transcriber/whisperx_transcribe.py");
-
-    if !python_path.exists() {
-        return "Python environment not found. Please run setup.".to_string();
+    match Transcriber::new() {
+        Ok(_) => {
+            let hf_status = if std::env::var("HF_TOKEN").is_ok() {
+                "Speaker diarization enabled"
+            } else {
+                "Speaker diarization disabled (no HF_TOKEN)"
+            };
+            format!("WhisperX ready. {}", hf_status)
+        }
+        Err(_) => "Transcriber not found".to_string(),
     }
-
-    if !script_path.exists() {
-        return "Transcription script not found.".to_string();
-    }
-
-    // Check if HF_TOKEN is set
-    let hf_status = if std::env::var("HF_TOKEN").is_ok() {
-        "Speaker diarization enabled"
-    } else {
-        "Speaker diarization disabled (no HF_TOKEN)"
-    };
-
-    format!("WhisperX ready. {}", hf_status)
 }

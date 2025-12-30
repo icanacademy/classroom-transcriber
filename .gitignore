@@ -20,3 +20,11 @@ models/*.bin
 
 # Python virtual environment
 whisperx-env/
+src-tauri/whisperx-env/
+
+# PyInstaller outputs
+build/
+*.spec
+
+# Bundled binaries (built in CI)
+src-tauri/binaries/

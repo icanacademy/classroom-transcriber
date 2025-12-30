@@ -349,10 +349,7 @@ fn load_model(state: State<AppState>) -> Result<(), String> {
         }
     }
 
-    // Use project directory where whisperx-env is installed
-    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
-
-    let mut transcriber = Transcriber::new(&project_dir).map_err(|e| e.to_string())?;
+    let mut transcriber = Transcriber::new().map_err(|e| e.to_string())?;
 
     // Set HF token if available in settings
     {
@@ -464,18 +461,12 @@ fn download_model(state: State<AppState>, window: tauri::Window) -> Result<(), S
     // This function now just initializes the transcriber
     let _ = window.emit("model-download-progress", "Initializing WhisperX...");
 
-    // Check if Python environment exists
-    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
-    let python_path = project_dir.join("whisperx-env").join("bin").join("python");
-
-    if !python_path.exists() {
-        return Err("WhisperX Python environment not found. Please run setup first.".to_string());
-    }
-
-    let _ = window.emit("model-download-progress", "WhisperX ready!");
+    let _ = window.emit("model-download-progress", "Loading WhisperX...");
 
     // Load the transcriber
-    let mut transcriber = Transcriber::new(&project_dir).map_err(|e| e.to_string())?;
+    let mut transcriber = Transcriber::new().map_err(|e| e.to_string())?;
+
+    let _ = window.emit("model-download-progress", "WhisperX ready!");
 
     // Set HF token if available
     {
@@ -496,10 +487,8 @@ fn download_model(state: State<AppState>, window: tauri::Window) -> Result<(), S
 
 #[tauri::command]
 fn check_model_exists(_state: State<AppState>) -> bool {
-    // Check if WhisperX Python environment exists
-    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
-    let python_path = project_dir.join("whisperx-env").join("bin").join("python");
-    python_path.exists()
+    // Check if bundled transcriber exists
+    Transcriber::new().is_ok()
 }
 
 #[tauri::command]
@@ -612,30 +601,23 @@ pub fn run() {
     // Initialize audio recorder
     let recorder = AudioRecorder::new().expect("Failed to initialize audio recorder");
 
-    // Auto-load WhisperX transcriber if Python environment exists
-    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
-    let python_path = project_dir.join("whisperx-env").join("bin").join("python");
-    let transcriber = if python_path.exists() {
-        match Transcriber::new(&project_dir) {
-            Ok(mut t) => {
-                println!("WhisperX transcriber loaded from: {}", project_dir.display());
-                // Try to set HF token from settings
-                if let Ok(Some(token)) = db.get_setting("hf_token") {
-                    if !token.is_empty() {
-                        t.set_hf_token(token);
-                        std::env::set_var("HF_TOKEN", db.get_setting("hf_token").unwrap().unwrap_or_default());
-                    }
+    // Auto-load WhisperX transcriber if bundled binary exists
+    let transcriber = match Transcriber::new() {
+        Ok(mut t) => {
+            println!("WhisperX transcriber loaded");
+            // Try to set HF token from settings
+            if let Ok(Some(token)) = db.get_setting("hf_token") {
+                if !token.is_empty() {
+                    t.set_hf_token(token.clone());
+                    std::env::set_var("HF_TOKEN", &token);
                 }
-                Some(t)
             }
-            Err(e) => {
-                eprintln!("Failed to load WhisperX: {}", e);
-                None
-            }
+            Some(t)
         }
-    } else {
-        println!("WhisperX not found at: {}", python_path.display());
-        None
+        Err(e) => {
+            eprintln!("Failed to load WhisperX: {}", e);
+            None
+        }
     };
 
     let app_state = AppState {
