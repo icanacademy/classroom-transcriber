@@ -41,20 +41,29 @@ impl Transcriber {
     pub fn new() -> Result<Self, WhisperError> {
         // Find the bundled whisperx-transcriber binary
         // In development, it's in src-tauri/binaries/
-        // In production, it's in the app bundle
+        // In production, it's in the app bundle next to the main executable
 
-        let possible_paths = vec![
-            // Development paths
-            PathBuf::from("binaries/whisperx-transcriber-x86_64-apple-darwin"),
-            PathBuf::from("src-tauri/binaries/whisperx-transcriber-x86_64-apple-darwin"),
-            PathBuf::from("/Users/edward/classroom-transcriber/src-tauri/binaries/whisperx-transcriber-x86_64-apple-darwin"),
-            PathBuf::from("/Users/edward/classroom-transcriber/dist/whisperx-transcriber"),
-            // Production paths (macOS)
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.join("whisperx-transcriber")))
-                .unwrap_or_default(),
-        ];
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+        let mut possible_paths = vec![];
+
+        // Production paths - next to the executable
+        if let Some(ref dir) = exe_dir {
+            // Windows: whisperx-transcriber.exe
+            possible_paths.push(dir.join("whisperx-transcriber.exe"));
+            // macOS: whisperx-transcriber
+            possible_paths.push(dir.join("whisperx-transcriber"));
+        }
+
+        // Development paths - macOS
+        possible_paths.push(PathBuf::from("binaries/whisperx-transcriber-x86_64-apple-darwin"));
+        possible_paths.push(PathBuf::from("src-tauri/binaries/whisperx-transcriber-x86_64-apple-darwin"));
+
+        // Development paths - Windows
+        possible_paths.push(PathBuf::from("binaries/whisperx-transcriber-x86_64-pc-windows-msvc.exe"));
+        possible_paths.push(PathBuf::from("src-tauri/binaries/whisperx-transcriber-x86_64-pc-windows-msvc.exe"));
 
         for path in &possible_paths {
             if path.exists() {
@@ -62,19 +71,6 @@ impl Transcriber {
                     binary_path: path.clone(),
                     hf_token: std::env::var("HF_TOKEN").ok(),
                 });
-            }
-        }
-
-        // Fallback: Try to find it relative to the executable
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let sidecar = exe_dir.join("whisperx-transcriber");
-                if sidecar.exists() {
-                    return Ok(Self {
-                        binary_path: sidecar,
-                        hf_token: std::env::var("HF_TOKEN").ok(),
-                    });
-                }
             }
         }
 
