@@ -17,3 +17,6 @@ Thumbs.db
 .env
 .env.local
 models/*.bin
+
+# Python virtual environment
+whisperx-env/

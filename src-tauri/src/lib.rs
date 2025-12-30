@@ -339,31 +339,60 @@ fn stop_and_process(state: State<AppState>, window: tauri::Window) -> Result<Pro
 
 #[tauri::command]
 fn load_model(state: State<AppState>) -> Result<(), String> {
-    // Check for custom model path first
-    let model_path = {
+    // Get HF token from settings and set it in environment
+    {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        if let Ok(Some(custom_path)) = db.get_setting("model_path") {
-            if !custom_path.is_empty() {
-                PathBuf::from(custom_path)
-            } else {
-                state.data_dir.join("models").join("ggml-base.en.bin")
+        if let Ok(Some(token)) = db.get_setting("hf_token") {
+            if !token.is_empty() {
+                std::env::set_var("HF_TOKEN", &token);
             }
-        } else {
-            state.data_dir.join("models").join("ggml-base.en.bin")
         }
-    };
-
-    if !model_path.exists() {
-        return Err(format!(
-            "Model not found. Please download ggml-base.en.bin to: {}",
-            model_path.display()
-        ));
     }
 
-    let transcriber = Transcriber::new(&model_path).map_err(|e| e.to_string())?;
+    // Use project directory where whisperx-env is installed
+    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
+
+    let mut transcriber = Transcriber::new(&project_dir).map_err(|e| e.to_string())?;
+
+    // Set HF token if available in settings
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(token)) = db.get_setting("hf_token") {
+            if !token.is_empty() {
+                transcriber.set_hf_token(token);
+            }
+        }
+    }
+
     *state.transcriber.lock().unwrap() = Some(transcriber);
 
     Ok(())
+}
+
+#[tauri::command]
+fn set_hf_token(state: State<AppState>, token: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_setting("hf_token", &token).map_err(|e| e.to_string())?;
+
+    // Also set in environment for current session
+    std::env::set_var("HF_TOKEN", &token);
+
+    // Update existing transcriber if loaded
+    if let Ok(mut transcriber_guard) = state.transcriber.lock() {
+        if let Some(ref mut transcriber) = *transcriber_guard {
+            transcriber.set_hf_token(token);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_hf_token(state: State<AppState>) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    Ok(db.get_setting("hf_token")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default())
 }
 
 #[tauri::command]
@@ -431,47 +460,46 @@ fn set_model_path(state: State<AppState>, path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn download_model(state: State<AppState>, window: tauri::Window) -> Result<(), String> {
-    let model_path = state.data_dir.join("models").join("ggml-base.en.bin");
+    // WhisperX models are downloaded automatically by the Python script
+    // This function now just initializes the transcriber
+    let _ = window.emit("model-download-progress", "Initializing WhisperX...");
 
-    if model_path.exists() {
-        return Ok(()); // Already downloaded
+    // Check if Python environment exists
+    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
+    let python_path = project_dir.join("whisperx-env").join("bin").join("python");
+
+    if !python_path.exists() {
+        return Err("WhisperX Python environment not found. Please run setup first.".to_string());
     }
 
-    let _ = window.emit("model-download-progress", "Starting download...");
+    let _ = window.emit("model-download-progress", "WhisperX ready!");
 
-    let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+    // Load the transcriber
+    let mut transcriber = Transcriber::new(&project_dir).map_err(|e| e.to_string())?;
 
-    // Download the model
-    let response = reqwest::blocking::get(url)
-        .map_err(|e| format!("Failed to download: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Download failed with status: {}", response.status()));
+    // Set HF token if available
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(token)) = db.get_setting("hf_token") {
+            if !token.is_empty() {
+                transcriber.set_hf_token(token);
+            }
+        }
     }
 
-    let _ = window.emit("model-download-progress", "Downloading... (142 MB)");
-
-    let bytes = response.bytes()
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-
-    let _ = window.emit("model-download-progress", "Saving model...");
-
-    std::fs::write(&model_path, &bytes)
-        .map_err(|e| format!("Failed to save model: {}", e))?;
+    *state.transcriber.lock().unwrap() = Some(transcriber);
 
     let _ = window.emit("model-download-progress", "Done!");
-
-    // Auto-load the model after download
-    let transcriber = Transcriber::new(&model_path).map_err(|e| e.to_string())?;
-    *state.transcriber.lock().unwrap() = Some(transcriber);
 
     Ok(())
 }
 
 #[tauri::command]
-fn check_model_exists(state: State<AppState>) -> bool {
-    let model_path = state.data_dir.join("models").join("ggml-base.en.bin");
-    model_path.exists()
+fn check_model_exists(_state: State<AppState>) -> bool {
+    // Check if WhisperX Python environment exists
+    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
+    let python_path = project_dir.join("whisperx-env").join("bin").join("python");
+    python_path.exists()
 }
 
 #[tauri::command]
@@ -584,21 +612,29 @@ pub fn run() {
     // Initialize audio recorder
     let recorder = AudioRecorder::new().expect("Failed to initialize audio recorder");
 
-    // Auto-load model if it exists
-    let model_path = data_dir.join("models").join("ggml-base.en.bin");
-    let transcriber = if model_path.exists() {
-        match Transcriber::new(&model_path) {
-            Ok(t) => {
-                println!("Model auto-loaded from: {}", model_path.display());
+    // Auto-load WhisperX transcriber if Python environment exists
+    let project_dir = PathBuf::from("/Users/edward/classroom-transcriber");
+    let python_path = project_dir.join("whisperx-env").join("bin").join("python");
+    let transcriber = if python_path.exists() {
+        match Transcriber::new(&project_dir) {
+            Ok(mut t) => {
+                println!("WhisperX transcriber loaded from: {}", project_dir.display());
+                // Try to set HF token from settings
+                if let Ok(Some(token)) = db.get_setting("hf_token") {
+                    if !token.is_empty() {
+                        t.set_hf_token(token);
+                        std::env::set_var("HF_TOKEN", db.get_setting("hf_token").unwrap().unwrap_or_default());
+                    }
+                }
                 Some(t)
             }
             Err(e) => {
-                eprintln!("Failed to auto-load model: {}", e);
+                eprintln!("Failed to load WhisperX: {}", e);
                 None
             }
         }
     } else {
-        println!("Model not found at: {}", model_path.display());
+        println!("WhisperX not found at: {}", python_path.display());
         None
     };
 
@@ -631,6 +667,8 @@ pub fn run() {
             get_model_path,
             set_model_path,
             get_whisper_status,
+            set_hf_token,
+            get_hf_token,
             // Recordings list
             get_recordings,
             delete_recording,

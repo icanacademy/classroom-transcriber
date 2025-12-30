@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 use thiserror::Error;
@@ -6,306 +7,188 @@ use thiserror::Error;
 pub enum WhisperError {
     #[error("Model not found at {0}")]
     ModelNotFound(String),
-    #[error("Whisper CLI not found. Please install: brew install whisper-cpp")]
-    CliNotFound,
+    #[error("Python environment not found")]
+    PythonNotFound,
     #[error("Transcription failed: {0}")]
     TranscriptionError(String),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptSegment {
+    pub speaker: String,
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakerStats {
+    pub word_count: usize,
+    pub duration: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionResult {
+    pub segments: Vec<TranscriptSegment>,
+    pub speakers: std::collections::HashMap<String, SpeakerStats>,
+    pub full_transcript: String,
+}
+
 pub struct Transcriber {
-    model_path: PathBuf,
-    whisper_cli: PathBuf,
+    python_path: PathBuf,
+    script_path: PathBuf,
+    hf_token: Option<String>,
 }
 
 impl Transcriber {
-    pub fn new(model_path: &PathBuf) -> Result<Self, WhisperError> {
-        if !model_path.exists() {
-            return Err(WhisperError::ModelNotFound(
-                model_path.to_string_lossy().to_string(),
-            ));
+    pub fn new(app_dir: &PathBuf) -> Result<Self, WhisperError> {
+        // Find Python in the whisperx-env
+        let python_path = app_dir.join("whisperx-env").join("bin").join("python");
+
+        if !python_path.exists() {
+            // Try alternate locations
+            let alt_python = PathBuf::from("/Users/edward/classroom-transcriber/whisperx-env/bin/python");
+            if alt_python.exists() {
+                return Ok(Self {
+                    python_path: alt_python,
+                    script_path: PathBuf::from("/Users/edward/classroom-transcriber/whisperx_transcribe.py"),
+                    hf_token: std::env::var("HF_TOKEN").ok(),
+                });
+            }
+            return Err(WhisperError::PythonNotFound);
         }
 
-        // Find whisper CLI
-        let whisper_cli = find_whisper_cli()?;
-
-        // On Windows, ensure DLLs are next to whisper-cli.exe
-        #[cfg(target_os = "windows")]
-        {
-            ensure_dlls_available(&whisper_cli);
-        }
+        let script_path = app_dir.join("whisperx_transcribe.py");
 
         Ok(Self {
-            model_path: model_path.clone(),
-            whisper_cli,
+            python_path,
+            script_path,
+            hf_token: std::env::var("HF_TOKEN").ok(),
         })
     }
 
+    pub fn set_hf_token(&mut self, token: String) {
+        self.hf_token = Some(token);
+    }
+
     pub fn transcribe(&self, audio_path: &PathBuf) -> Result<String, WhisperError> {
-        // Build the command
-        let mut cmd = Command::new(&self.whisper_cli);
+        // Call Python script for transcription with diarization
+        let result = self.transcribe_with_diarization(audio_path)?;
 
-        // On Windows, add directories to PATH so whisper-cli can find DLLs
-        #[cfg(target_os = "windows")]
-        {
-            let mut paths_to_add = Vec::new();
+        // For backwards compatibility, return just the student's transcript
+        // Filter out likely teacher segments (usually the one who talks less or asks questions)
+        Ok(self.extract_student_transcript(&result))
+    }
 
-            // Add whisper-cli directory
-            if let Some(cli_dir) = self.whisper_cli.parent() {
-                paths_to_add.push(cli_dir.to_path_buf());
-            }
+    pub fn transcribe_with_diarization(&self, audio_path: &PathBuf) -> Result<TranscriptionResult, WhisperError> {
+        let mut cmd = Command::new(&self.python_path);
+        cmd.arg(&self.script_path);
+        cmd.arg(audio_path.to_str().unwrap());
+        cmd.arg("--model");
+        cmd.arg("tiny"); // Use tiny for speed, can be configurable later
 
-            // Add resources directory (where Tauri bundles additional files)
-            if let Ok(exe_path) = std::env::current_exe() {
-                if let Some(exe_dir) = exe_path.parent() {
-                    // Check resources subfolder
-                    let resources_dir = exe_dir.join("resources");
-                    if resources_dir.exists() {
-                        paths_to_add.push(resources_dir);
-                    }
-                    // Also add exe directory itself
-                    paths_to_add.push(exe_dir.to_path_buf());
-                }
-            }
-
-            if !paths_to_add.is_empty() {
-                let current_path = std::env::var("PATH").unwrap_or_default();
-                let new_paths: Vec<String> = paths_to_add.iter().map(|p| p.display().to_string()).collect();
-                let new_path = format!("{};{}", new_paths.join(";"), current_path);
-                cmd.env("PATH", new_path);
-            }
+        // Add HF token if available
+        if let Some(ref token) = self.hf_token {
+            cmd.arg("--hf-token");
+            cmd.arg(token);
+        } else {
+            cmd.arg("--no-diarize");
         }
 
-        // Run whisper CLI
+        // Set environment
+        cmd.env("KMP_DUPLICATE_LIB_OK", "TRUE");
+
         let output = cmd
-            .args([
-                "-m",
-                self.model_path.to_str().unwrap(),
-                "-f",
-                audio_path.to_str().unwrap(),
-                "-l",
-                "en",
-                "--no-timestamps",
-                "-otxt",
-            ])
             .output()
-            .map_err(|e| WhisperError::TranscriptionError(format!("Failed to run whisper-cli: {}", e)))?;
+            .map_err(|e| WhisperError::TranscriptionError(format!("Failed to run Python script: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
             return Err(WhisperError::TranscriptionError(format!(
-                "Whisper failed. stderr: {} stdout: {}",
-                stderr, stdout
+                "Transcription failed: {}",
+                stderr
             )));
         }
 
-        // Try multiple possible output file paths
-        // whisper-cli creates .txt file, but the exact naming varies by version
-        let possible_txt_paths = vec![
-            audio_path.with_extension("txt"),           // recording.txt (replaces .wav)
-            audio_path.with_extension("wav.txt"),       // recording.wav.txt (appends .txt)
-            {
-                // Same directory, same base name + .txt
-                let mut p = audio_path.clone();
-                let filename = audio_path.file_stem().unwrap_or_default().to_string_lossy();
-                p.set_file_name(format!("{}.txt", filename));
-                p
-            },
-        ];
-
-        for txt_path in &possible_txt_paths {
-            if txt_path.exists() {
-                let transcript = std::fs::read_to_string(txt_path)
-                    .map_err(|e| WhisperError::TranscriptionError(format!("Failed to read transcript file: {}", e)))?;
-                // Clean up the txt file
-                let _ = std::fs::remove_file(txt_path);
-                let trimmed = transcript.trim().to_string();
-                if !trimmed.is_empty() {
-                    return Ok(trimmed);
-                }
-            }
-        }
-
-        // Fallback: parse stdout
+        // Parse JSON output
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let trimmed = stdout.trim().to_string();
 
-        if trimmed.is_empty() {
-            return Err(WhisperError::TranscriptionError(
-                "Transcription produced empty output. The audio may be too short or contain no speech.".to_string()
-            ));
-        }
-
-        Ok(trimmed)
-    }
-}
-
-fn find_whisper_cli() -> Result<PathBuf, WhisperError> {
-    let mut candidates: Vec<PathBuf> = vec![];
-
-    // First priority: Check bundled binary next to the app executable
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            #[cfg(target_os = "windows")]
-            {
-                // Direct locations
-                candidates.push(exe_dir.join("whisper-cli.exe"));
-                candidates.push(exe_dir.join("whisper-cli-x86_64-pc-windows-msvc.exe"));
-                // Resources folder (Tauri bundles resources here)
-                candidates.push(exe_dir.join("resources").join("whisper-cli.exe"));
-                candidates.push(exe_dir.join("resources").join("whisper-cli-x86_64-pc-windows-msvc.exe"));
-                // Binaries subfolder in resources
-                candidates.push(exe_dir.join("resources").join("binaries").join("whisper-cli.exe"));
-                candidates.push(exe_dir.join("resources").join("binaries").join("whisper-cli-x86_64-pc-windows-msvc.exe"));
-                // _up_ directory (for dev builds)
-                candidates.push(exe_dir.join("..").join("whisper-cli.exe"));
-            }
-            #[cfg(target_os = "macos")]
-            {
-                candidates.push(exe_dir.join("whisper-cli"));
-                candidates.push(exe_dir.join("whisper-cli-aarch64-apple-darwin"));
-                candidates.push(exe_dir.join("whisper-cli-x86_64-apple-darwin"));
-                // Resources folder
-                candidates.push(exe_dir.join("../Resources").join("whisper-cli"));
-                candidates.push(exe_dir.join("../Resources").join("whisper-cli-aarch64-apple-darwin"));
-                candidates.push(exe_dir.join("../Resources").join("binaries").join("whisper-cli-aarch64-apple-darwin"));
-            }
-            #[cfg(target_os = "linux")]
-            {
-                candidates.push(exe_dir.join("whisper-cli"));
-                candidates.push(exe_dir.join("whisper-cli-x86_64-unknown-linux-gnu"));
+        // Find the JSON line (skip any warning lines)
+        for line in stdout.lines() {
+            if line.starts_with('{') {
+                let result: TranscriptionResult = serde_json::from_str(line)
+                    .map_err(|e| WhisperError::TranscriptionError(format!("Failed to parse JSON: {}", e)))?;
+                return Ok(result);
             }
         }
+
+        Err(WhisperError::TranscriptionError("No JSON output from transcription".to_string()))
     }
 
-    // macOS Homebrew locations
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(PathBuf::from("/usr/local/bin/whisper-cli"));
-        candidates.push(PathBuf::from("/opt/homebrew/bin/whisper-cli"));
-        candidates.push(PathBuf::from("/usr/local/bin/whisper-cpp"));
-        candidates.push(PathBuf::from("/opt/homebrew/bin/whisper-cpp"));
-    }
-
-    // Windows locations
-    #[cfg(target_os = "windows")]
-    {
-        candidates.push(PathBuf::from("C:\\Program Files\\whisper-cpp\\whisper-cli.exe"));
-        candidates.push(PathBuf::from("C:\\Program Files (x86)\\whisper-cpp\\whisper-cli.exe"));
-
-        // Check in LOCALAPPDATA
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            candidates.push(PathBuf::from(format!("{}\\whisper-cpp\\whisper-cli.exe", local_app_data)));
+    fn extract_student_transcript(&self, result: &TranscriptionResult) -> String {
+        // If no diarization or only one speaker, return full transcript
+        if result.speakers.len() <= 1 {
+            return result.full_transcript.clone();
         }
-    }
 
-    for p in &candidates {
-        if p.exists() {
-            return Ok(p.clone());
+        // Find the speaker who talked the most (likely the student)
+        // In a classroom recording, the student is usually the one who speaks more
+        let mut speakers_by_words: Vec<_> = result.speakers.iter().collect();
+        speakers_by_words.sort_by(|a, b| b.1.word_count.cmp(&a.1.word_count));
+
+        // Create speaker labels: Speaker 1, Speaker 2, etc. (sorted by who talks most)
+        let mut speaker_labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for (i, (speaker, _)) in speakers_by_words.iter().enumerate() {
+            let label = format!("Speaker {}", i + 1);
+            speaker_labels.insert((*speaker).clone(), label);
         }
+
+        // Format transcript with speaker labels
+        let labeled_text: Vec<String> = result.segments
+            .iter()
+            .map(|s| {
+                let label = speaker_labels.get(&s.speaker).unwrap_or(&s.speaker);
+                format!("[{}] {}", label, s.text)
+            })
+            .collect();
+
+        labeled_text.join("\n")
     }
 
-    // Try to find via which (Unix) or where (Windows)
-    #[cfg(not(target_os = "windows"))]
-    {
-        for cmd in &["whisper-cli", "whisper-cpp"] {
-            if let Ok(output) = Command::new("which").arg(cmd).output() {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout);
-                    let p = PathBuf::from(path.trim());
-                    if p.exists() {
-                        return Ok(p);
-                    }
-                }
-            }
-        }
+    /// Get a formatted transcript with speaker labels
+    pub fn get_labeled_transcript(&self, result: &TranscriptionResult) -> String {
+        result.segments
+            .iter()
+            .map(|s| format!("[{}] {}", s.speaker, s.text))
+            .collect::<Vec<String>>()
+            .join("\n")
     }
-
-    #[cfg(target_os = "windows")]
-    {
-        for cmd in &["whisper-cli.exe", "whisper-cli", "whisper-cpp.exe"] {
-            if let Ok(output) = Command::new("where").arg(cmd).output() {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout);
-                    let first_line = path.lines().next().unwrap_or("").trim();
-                    let p = PathBuf::from(first_line);
-                    if p.exists() {
-                        return Ok(p);
-                    }
-                }
-            }
-        }
-    }
-
-    Err(WhisperError::CliNotFound)
 }
 
 pub fn check_whisper_installed() -> bool {
-    find_whisper_cli().is_ok()
-}
-
-/// On Windows, copy DLLs from resources folder to whisper-cli directory if needed
-#[cfg(target_os = "windows")]
-fn ensure_dlls_available(whisper_cli: &PathBuf) {
-    let cli_dir = match whisper_cli.parent() {
-        Some(dir) => dir,
-        None => return,
-    };
-
-    // Find resources directory
-    let resources_dir = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            exe_dir.join("resources")
-        } else {
-            return;
-        }
-    } else {
-        return;
-    };
-
-    // Copy ALL DLLs from resources to whisper-cli directory
-    if let Ok(entries) = std::fs::read_dir(&resources_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext == "dll" {
-                    if let Some(filename) = path.file_name() {
-                        let dst = cli_dir.join(filename);
-                        if !dst.exists() {
-                            let _ = std::fs::copy(&path, &dst);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Check if Python environment exists
+    let python_path = PathBuf::from("/Users/edward/classroom-transcriber/whisperx-env/bin/python");
+    python_path.exists()
 }
 
 pub fn get_whisper_status() -> String {
-    match find_whisper_cli() {
-        Ok(path) => {
-            // On Windows, ensure DLLs are available
-            #[cfg(target_os = "windows")]
-            {
-                ensure_dlls_available(&path);
-            }
+    let python_path = PathBuf::from("/Users/edward/classroom-transcriber/whisperx-env/bin/python");
+    let script_path = PathBuf::from("/Users/edward/classroom-transcriber/whisperx_transcribe.py");
 
-            // Try to run --help to verify it works
-            let result = std::process::Command::new(&path)
-                .arg("--help")
-                .output();
-            match result {
-                Ok(output) => {
-                    if output.status.success() {
-                        format!("Found and working: {}", path.display())
-                    } else {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        format!("Found but error: {} - {}", path.display(), stderr)
-                    }
-                }
-                Err(e) => format!("Found but can't run: {} - {}", path.display(), e),
-            }
-        }
-        Err(e) => format!("Not found: {}", e),
+    if !python_path.exists() {
+        return "Python environment not found. Please run setup.".to_string();
     }
+
+    if !script_path.exists() {
+        return "Transcription script not found.".to_string();
+    }
+
+    // Check if HF_TOKEN is set
+    let hf_status = if std::env::var("HF_TOKEN").is_ok() {
+        "Speaker diarization enabled"
+    } else {
+        "Speaker diarization disabled (no HF_TOKEN)"
+    };
+
+    format!("WhisperX ready. {}", hf_status)
 }

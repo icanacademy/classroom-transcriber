@@ -624,11 +624,27 @@ function App() {
               </div>
             )}
 
-            {/* Show last transcript */}
+            {/* Show last transcript with speaker labels */}
             {lastTranscript && !isProcessing && !isRecording && (
               <div className="last-transcript">
                 <h3>Last Transcript:</h3>
-                <p>{lastTranscript}</p>
+                <div className="transcript-content">
+                  {lastTranscript.split('\n').map((line, idx) => {
+                    const match = line.match(/^\[(.+?)\]\s*(.*)$/);
+                    if (match) {
+                      const [, speaker, text] = match;
+                      const isSpeaker1 = speaker === 'Speaker 1';
+                      const isSpeaker2 = speaker === 'Speaker 2';
+                      return (
+                        <div key={idx} className={`transcript-line ${isSpeaker1 ? 'speaker1' : isSpeaker2 ? 'speaker2' : 'other'}`}>
+                          <span className="speaker-label">{speaker}:</span>
+                          <span className="speech-text">{text}</span>
+                        </div>
+                      );
+                    }
+                    return <div key={idx} className="transcript-line">{line}</div>;
+                  })}
+                </div>
               </div>
             )}
 
@@ -672,7 +688,23 @@ function App() {
 
                     {rec.transcript ? (
                       <div className="transcript">
-                        <p>{rec.transcript}</p>
+                        <div className="transcript-content">
+                          {rec.transcript.split('\n').map((line, idx) => {
+                            const match = line.match(/^\[(.+?)\]\s*(.*)$/);
+                            if (match) {
+                              const [, speaker, text] = match;
+                              const isSpeaker1 = speaker === 'Speaker 1';
+                              const isSpeaker2 = speaker === 'Speaker 2';
+                              return (
+                                <div key={idx} className={`transcript-line ${isSpeaker1 ? 'speaker1' : isSpeaker2 ? 'speaker2' : 'other'}`}>
+                                  <span className="speaker-label">{speaker}:</span>
+                                  <span className="speech-text">{text}</span>
+                                </div>
+                              );
+                            }
+                            return <div key={idx} className="transcript-line">{line}</div>;
+                          })}
+                        </div>
                       </div>
                     ) : (
                       <div className="no-transcript">
